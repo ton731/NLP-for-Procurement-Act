@@ -1,3 +1,4 @@
+from tqdm import tqdm
 from rank_bm25 import BM25Okapi
 
 
@@ -15,15 +16,53 @@ def select_relevant_contexts(query, contexts, k=1):
     Returns:
         List[str]: relevant contexts, ordered by correlation
     """
-
+    # tokenize context and create BM25 object
     tokenized_contexts = [list(doc) for doc in contexts]
     bm25 = BM25Okapi(tokenized_contexts)
 
+    # tokenize query and get each context's score
     tokenized_query = list(query)
     context_scores = bm25.get_scores(tokenized_query)
 
+    # return the top-k best context
     top_contexts = bm25.get_top_n(tokenized_query, contexts, n=k)
-    return top_contexts
+    return top_contexts, context_scores[:k]
+
+
+
+def find_question_relevant_laws(questions, laws, k=3):
+    """
+    Find the k most relevant laws for each question using BM25 algorithm.
+
+    Args:
+        questions (List[Dict]): questions
+        laws (List[Dict]): laws
+        k (int): the desired number of relevant laws for each question
+
+    Returns:
+        List[Dict]: the questions updated with the relevant laws
+    """
+    # extract the law strings from the laws list
+    law_contexts = ["，".join([law["Chapter"], law["Clause"], law["Content"]]) for law in laws]
+    
+    # get relevant laws for each question
+    for i in tqdm(range(len(questions))):
+        question_query = questions[i]["question"]
+        relevant_laws, scores = select_relevant_contexts(question_query, law_contexts, 3)
+
+        # update the question dictionary
+        questions[i]["relevant_laws"] = relevant_laws
+
+        # print("question:", question_query)
+        # for i, law in enumerate(relevant_laws):
+        #     print(f"score: {scores[i]:.4f}, law: {law}")
+        # print("\n"*4)
+
+    return questions
+
+
+
+
 
 
 
