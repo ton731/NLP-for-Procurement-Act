@@ -1,1 +1,6 @@
 rank_bm25
+scikit-learn
+datasets
+evaluate
+jsonlines
+transformers

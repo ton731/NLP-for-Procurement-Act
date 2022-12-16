@@ -27,6 +27,7 @@ import random
 from dataclasses import dataclass
 from itertools import chain
 from pathlib import Path
+from datetime import datetime
 from typing import Optional, Union
 
 import datasets
@@ -53,6 +54,9 @@ from transformers import (
     get_scheduler,
 )
 from transformers.utils import PaddingStrategy, check_min_version, get_full_repo_name, send_example_telemetry
+
+
+import utils
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -212,6 +216,16 @@ def parse_args():
             "Only applicable when `--with_tracking` is passed."
         ),
     )
+
+
+    # whether use laws as inputs
+    parser.add_argument("--use_law", action="store_true", default=False)
+    parser.add_argument("--law_file", type=Path, default=None)
+    
+
+
+
+
     args = parser.parse_args()
 
     if args.push_to_hub:
@@ -224,14 +238,12 @@ def parse_args():
 class DataCollatorForMultipleChoice:
     """
     Data collator that will dynamically pad the inputs for multiple choice received.
-
     Args:
         tokenizer ([`PreTrainedTokenizer`] or [`PreTrainedTokenizerFast`]):
             The tokenizer used for encoding the data.
         padding (`bool`, `str` or [`~utils.PaddingStrategy`], *optional*, defaults to `True`):
             Select a strategy to pad the returned sequences (according to the model's padding side and padding index)
             among:
-
             - `True` or `'longest'`: Pad to the longest sequence in the batch (or no padding if only a single sequence
               if provided).
             - `'max_length'`: Pad to a maximum length specified with the argument `max_length` or to the maximum
@@ -242,7 +254,6 @@ class DataCollatorForMultipleChoice:
             Maximum length of the returned list and optionally padding length (see above).
         pad_to_multiple_of (`int`, *optional*):
             If set will pad the sequence to a multiple of the provided value.
-
             This is especially useful to enable the use of Tensor Cores on NVIDIA hardware with compute capability >=
             7.5 (Volta).
     """
@@ -279,6 +290,10 @@ class DataCollatorForMultipleChoice:
 
 def main():
     args = parse_args()
+
+    args.output_dir = Path(args.output_dir) / datetime.now().strftime("%Y_%m_%d__%H_%M_%S")
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
@@ -414,12 +429,29 @@ def main():
     # First we tokenize all the texts.
     padding = "max_length" if args.pad_to_max_length else False
 
+
+    # load laws
+    if args.law_file:
+        laws = json.loads(args.law_file.read_text())
+
+
     def preprocess_function(examples):
-        first_sentences = [[question] * 4 for question in examples[question_name]]
+        # if use_laws, concat the top-k relevant laws to the question
+        if args.use_law:
+            questions = examples[question_name]
+            questions_relevant_laws = utils.find_question_relevant_laws(questions, laws, k=2)
+            first_sentences = []
+            for i, question in enumerate(examples[question_name]):
+                sentence = "。".join([question] + questions_relevant_laws[i])
+                first_sentences.append([sentence] * 4)
+        else:
+            first_sentences = [[question] * 4 for question in examples[question_name]]
+
         paragraphs_idx = [idx + random.sample(set(range(len(context_json))) - set(idx), 4 - len(idx)) for idx in examples[paragraphs_idx_name]]
         second_sentences = [
             [context_json[i] for i in idx] for idx in paragraphs_idx
         ]
+
 
         # Flatten out
         first_sentences = list(chain(*first_sentences))

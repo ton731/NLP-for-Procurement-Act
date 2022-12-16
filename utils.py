@@ -35,30 +35,31 @@ def find_question_relevant_laws(questions, laws, k=3):
     Find the k most relevant laws for each question using BM25 algorithm.
 
     Args:
-        questions (List[Dict]): questions
+        questions (List[str]): questions
         laws (List[Dict]): laws
         k (int): the desired number of relevant laws for each question
 
     Returns:
-        List[Dict]: the questions updated with the relevant laws
+        List[List[str]]: list of list contains relevant laws for each question
     """
     # extract the law strings from the laws list
     law_contexts = ["，".join([law["Chapter"], law["Clause"], law["Content"]]) for law in laws]
     
     # get relevant laws for each question
+    question_relevant_laws = []
     for i in tqdm(range(len(questions))):
-        question_query = questions[i]["question"]
+        question_query = questions[i]
         relevant_laws, scores = select_relevant_contexts(question_query, law_contexts, 3)
 
-        # update the question dictionary
-        questions[i]["relevant_laws"] = relevant_laws
+        # update list
+        question_relevant_laws.append(relevant_laws)
 
         # print("question:", question_query)
         # for i, law in enumerate(relevant_laws):
         #     print(f"score: {scores[i]:.4f}, law: {law}")
         # print("\n"*4)
 
-    return questions
+    return question_relevant_laws
 
 
 
