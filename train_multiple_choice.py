@@ -452,6 +452,10 @@ def main():
             [context_json[i] for i in idx] for idx in paragraphs_idx
         ]
 
+        # reverse the first sentence and second sentence order, so that the laws are
+        # in the end of the seond sentence and can be removed if the input is too long.
+        first_sentences, second_sentences = second_sentences, first_sentences
+
 
         # Flatten out
         first_sentences = list(chain(*first_sentences))
