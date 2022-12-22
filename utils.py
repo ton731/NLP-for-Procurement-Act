@@ -54,12 +54,52 @@ def find_question_relevant_laws(questions, laws, k=3):
         # update list
         question_relevant_laws.append(relevant_laws)
 
-        # print("question:", question_query)
-        # for i, law in enumerate(relevant_laws):
-        #     print(f"score: {scores[i]:.4f}, law: {law}")
-        # print("\n"*4)
-
     return question_relevant_laws
+
+
+
+def remove_bad_questions(questions):
+    """
+    Remove the bad questions from the quesitom list.
+
+    Args:
+        questions (List[str]): questions
+
+    Returns:
+        List[str]: the clean question list
+        List[int]: index of the clean questions
+    """
+
+    SHORT_QUESTION_LEN = 13
+    BAD_QUESTION_KEYWORD = ["下列", "敘述", "何者", "錯誤"]
+    MAXIMUM_BAD_KEYWORD_TOLERANCE = 1
+
+    clean_questions = []
+    clean_questions_index = []
+
+    print("start removing bad questions:")
+    for i, question in enumerate(questions):
+        if len(question) < SHORT_QUESTION_LEN:
+            keyword_count = 0
+            for keyword in BAD_QUESTION_KEYWORD:
+                if keyword in question:
+                    keyword_count += 1
+            if keyword_count < MAXIMUM_BAD_KEYWORD_TOLERANCE:
+                clean_questions.append(question)
+                clean_questions_index.append(i)
+            else:
+                print("remove:", question)
+        else:
+            clean_questions.append(question)
+            clean_questions_index.append(i)
+            
+    
+    print()
+    print("original question number:", len(questions))
+    print("cleaned question number:", len(clean_questions))
+    print()
+
+    return clean_questions, clean_questions_index
 
 
 

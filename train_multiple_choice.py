@@ -29,6 +29,7 @@ from itertools import chain
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Union
+import operator
 
 import datasets
 import torch
@@ -436,18 +437,27 @@ def main():
 
 
     def preprocess_function(examples):
+        print()
+        print("example keys:")
+        print(examples.keys())
+        print()
+        # first clean the question and correponsing paragraphs
+        questions = examples[question_name]
+        paragraphs = examples[paragraphs_idx_name]
+        questions, clean_questions_index = utils.remove_bad_questions(questions)
+        paragraphs = list(operator.itemgetter(*clean_questions_index)(paragraphs))
+
         # if use_laws, concat the top-k relevant laws to the question
         if args.use_law:
-            questions = examples[question_name]
             questions_relevant_laws = utils.find_question_relevant_laws(questions, laws, k=2)
             first_sentences = []
-            for i, question in enumerate(examples[question_name]):
+            for i, question in enumerate(questions):
                 sentence = "。".join([question] + questions_relevant_laws[i])
                 first_sentences.append([sentence] * 4)
         else:
-            first_sentences = [[question] * 4 for question in examples[question_name]]
+            first_sentences = [[question] * 4 for question in questions]
 
-        paragraphs_idx = [idx + random.sample(set(range(len(context_json))) - set(idx), 4 - len(idx)) for idx in examples[paragraphs_idx_name]]
+        paragraphs_idx = [idx + random.sample(set(range(len(context_json))) - set(idx), 4 - len(idx)) for idx in paragraphs]
         second_sentences = [
             [context_json[i] for i in idx] for idx in paragraphs_idx
         ]
@@ -473,6 +483,7 @@ def main():
         tokenized_inputs = {k: [v[i : i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
         if relevant_name in examples.keys():
             relevant = examples[relevant_name]
+            relevant = list(operator.itemgetter(*clean_questions_index)(relevant))
             tokenized_inputs['label'] = [paragraphs.index(rel) for rel, paragraphs in zip(relevant, paragraphs_idx)]
         else:
             tokenized_inputs['label'] = [0 for _ in paragraphs_idx]
