@@ -49,7 +49,7 @@ def find_question_relevant_laws(questions, laws, k=3):
     question_relevant_laws = []
     for i in tqdm(range(len(questions))):
         question_query = questions[i]
-        relevant_laws, scores = select_relevant_contexts(question_query, law_contexts, 3)
+        relevant_laws, scores = select_relevant_contexts(question_query, law_contexts, k)
 
         # update list
         question_relevant_laws.append(relevant_laws)
