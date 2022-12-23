@@ -452,7 +452,7 @@ def main():
             questions_relevant_laws = utils.find_question_relevant_laws(questions, laws, k=2)
             first_sentences = []
             for i, question in enumerate(questions):
-                sentence = "。".join([question] + questions_relevant_laws[i])
+                sentence = "[SEP]".join([question] + questions_relevant_laws[i])
                 first_sentences.append([sentence] * 4)
         else:
             first_sentences = [[question] * 4 for question in questions]
