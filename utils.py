@@ -58,6 +58,50 @@ def find_question_relevant_laws(questions, laws, k=3):
 
 
 
+def remove_law_unimportant_segements(questions, question_relevant_laws, k=2):
+    """
+    Use period 。 to seperate segments in a law and find the most important segments
+    in the law, then convert it back to a law paragraph.
+
+    Args:
+        questions (List[str]): questions
+        question_relevant_laws (List[List[str]]): list of list contains relevant laws for each question
+        k (int): the desired number most relevant segment for each law
+
+    Returns:
+        List[List[str]]: the unimportant part removed list of list contains relevant laws for each question
+    """
+    # the processed (remove unimportant segments) laws
+    processed_question_relevant_laws = []
+
+    for i, relevant_laws in enumerate(question_relevant_laws):
+        processed_relevant_laws = []
+        question_query = questions[i]
+
+        # go through all the relevant laws
+        for law in relevant_laws:
+            law_segments = law.split("。")
+            # find the important segment in the law
+            relevant_law_segments, scores = select_relevant_contexts(question_query, law_segments, k)
+            # concat the segments into a full law paragraph
+            processed_relevant_law = "。".join(relevant_law_segments)
+            processed_relevant_laws.append(processed_relevant_law)
+
+            print()
+            print("question:", question_query)
+            print("original law:", law)
+            print("processed las:", processed_relevant_law)
+            print()
+
+        processed_question_relevant_laws.append(processed_relevant_laws)
+
+    return processed_question_relevant_laws
+            
+
+
+
+
+
 def remove_bad_questions(questions):
     """
     Remove the bad questions from the quesitom list.

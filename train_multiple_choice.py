@@ -437,10 +437,6 @@ def main():
 
 
     def preprocess_function(examples):
-        print()
-        print("example keys:")
-        print(examples.keys())
-        print()
         # first clean the question and correponsing paragraphs
         questions = examples[question_name]
         paragraphs = examples[paragraphs_idx_name]
@@ -450,6 +446,7 @@ def main():
         # if use_laws, concat the top-k relevant laws to the question
         if args.use_law:
             questions_relevant_laws = utils.find_question_relevant_laws(questions, laws, k=2)
+            questions_relevant_laws = utils.remove_law_unimportant_segements(questions, questions_relevant_laws)
             first_sentences = []
             for i, question in enumerate(questions):
                 sentence = "[SEP]".join([question] + questions_relevant_laws[i])
