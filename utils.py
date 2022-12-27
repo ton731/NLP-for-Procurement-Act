@@ -153,6 +153,38 @@ def remove_bad_questions(questions):
 
 
 
+def get_choices_scores(pred, choices):
+
+    # tokenize choices and create BM25 object
+    tokenized_choices = [list(doc) for doc in choices]
+    bm25 = BM25Okapi(tokenized_choices)
+
+    # tokenize pred and get each choices' score
+    tokenized_pred = list(pred)
+    choice_scores = bm25.get_scores(tokenized_pred)
+
+    return choice_scores
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 if __name__ == "__main__":
     contexts = [
     "機關應於招標文件中規定，得不發還得標廠商所繳納之保證金及其孳息，或擔保者應履行其擔保責任之事由，並敘明該項事由所涉及之違約責任、保證金之抵充範圍及擔保者之擔保責任。 ",

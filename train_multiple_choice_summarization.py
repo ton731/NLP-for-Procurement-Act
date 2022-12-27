@@ -57,6 +57,8 @@ from transformers import (
 from transformers.utils import check_min_version, get_full_repo_name, is_offline_mode, send_example_telemetry
 from transformers.utils.versions import require_version
 
+import utils
+
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 # check_min_version("4.25.0.dev0")
 
@@ -512,6 +514,11 @@ def main():
 
         model_inputs["labels"] = labels["input_ids"]
         model_inputs["id"] = examples["id"]
+        model_inputs["choice0"] = examples["choice0"]
+        model_inputs["choice1"] = examples["choice1"]
+        model_inputs["choice2"] = examples["choice2"]
+        model_inputs["choice3"] = examples["choice3"]
+        model_inputs["Answer"] = examples["Answer"]
 
         # print("in preprocess_funuction:")
         # print("examples")
@@ -533,20 +540,23 @@ def main():
     train_dataset = processed_datasets["train"]
     eval_dataset = processed_datasets["validation"]
     eval_dataset_id = eval_dataset['id']
+    eval_dataset_choice0 = eval_dataset['choice0']
+    eval_dataset_choice1 = eval_dataset['choice1']
+    eval_dataset_choice2 = eval_dataset['choice2']
+    eval_dataset_choice3 = eval_dataset['choice3']
+    eval_dataset_correct_choice = eval_dataset['Answer']
     train_dataset = train_dataset.remove_columns('id')
+    train_dataset = train_dataset.remove_columns('choice0')
+    train_dataset = train_dataset.remove_columns('choice1')
+    train_dataset = train_dataset.remove_columns('choice2')
+    train_dataset = train_dataset.remove_columns('choice3')
+    train_dataset = train_dataset.remove_columns('Answer')
     eval_dataset = eval_dataset.remove_columns('id')
-
-
-    print("\n"*10)
-    print("print eval_dataset:")
-    print(eval_dataset)
-    print(eval_dataset["input_ids"])
-    print("\n"*10)
-
-    assert 1 == 2
-
-
-
+    eval_dataset = eval_dataset.remove_columns('choice0')
+    eval_dataset = eval_dataset.remove_columns('choice1')
+    eval_dataset = eval_dataset.remove_columns('choice2')
+    eval_dataset = eval_dataset.remove_columns('choice3')
+    eval_dataset = eval_dataset.remove_columns('Answer')
 
 
 
@@ -798,9 +808,44 @@ def main():
 
 
         # calculate multiple choice question accuracy
+        total_questions = len(eval_dataset_id)
+        answered_correctly = 0
         for i in range(len(title_predicted)): 
-            title = title_predicted[i].replace("<extra_id_0>", "").strip()
-            writer.write({"title": title, "id": eval_dataset_id[i]})
+            # get prediction
+            pred_summary = title_predicted[i].replace("<extra_id_0>", "").strip()
+
+            # get 4 choices context and get scores
+            choice_0 = eval_dataset_choice0[i]
+            choice_1 = eval_dataset_choice1[i]
+            choice_2 = eval_dataset_choice2[i]
+            choice_3 = eval_dataset_choice3[i]
+            scores = utils.get_choices_scores(pred_summary, [choice_0, choice_1, choice_2, choice_3])
+
+            # compare result
+            pred_answer = np.argmax(np.array(scores))
+            true_answer = int(eval_dataset_correct_choice[i][-1])
+            if pred_answer == true_answer:
+                answered_correctly += 1
+
+            print("\n\n\n")
+            print("epoch:", epoch)
+            print(f"question:", i)
+            print("pred summary:", pred_summary)
+            print(f"choice 0 score: {scores[0]:.4f}, text: {choice_0}")
+            print(f"choice 1 score: {scores[1]:.4f}, text: {choice_1}")
+            print(f"choice 2 score: {scores[2]:.4f}, text: {choice_2}")
+            print(f"choice 3 score: {scores[3]:.4f}, text: {choice_3}")
+            print("final prediction:", pred_answer)
+            print("true answer     :", true_answer)
+            print()
+
+
+        print("\n\n\n")
+        print("="*100)
+        print("Epoch:", epoch)
+        print("accuracy:", answered_correctly/total_questions)
+        print("\n\n\n")
+
               
 
 
