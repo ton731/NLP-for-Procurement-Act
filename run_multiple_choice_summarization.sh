@@ -1,0 +1,12 @@
+python train_multiple_choice_summarization.py \
+    --model_name_or_path google/mt5-small \
+    --train_file ./data/mT5data/mT5traindata.jsonl \
+    --validation_file ./data/mT5data/mT5validdata.jsonl \
+    --text_column maintext \
+    --summary_column title \
+    --max_source_length 512 \
+    --max_target_length 64 \
+    --num_beams 3 \
+    --num_train_epochs 10 \
+    --per_device_train_batch_size 1 \
+    --per_device_eval_batch_size 1 \
