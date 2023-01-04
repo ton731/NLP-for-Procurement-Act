@@ -30,6 +30,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Union
 import operator
+import pandas as pd
 
 import datasets
 import torch
@@ -109,19 +110,20 @@ def parse_args():
     parser.add_argument(
         "--model_name_or_path",
         type=str,
+        default=None,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
         required=False,
     )
     parser.add_argument(
         "--config_name",
         type=str,
-        default=None,
+        default='hfl/chinese-roberta-wwm-ext',
         help="Pretrained config name or path if not the same as model_name",
     )
     parser.add_argument(
         "--tokenizer_name",
         type=str,
-        default=None,
+        default='hfl/chinese-roberta-wwm-ext',
         help="Pretrained tokenizer name or path if not the same as model_name",
     )
     parser.add_argument(
@@ -158,7 +160,7 @@ def parse_args():
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
-        default=1,
+        default=4,
         help="Number of updates steps to accumulate before performing a backward/update pass.",
     )
     parser.add_argument(
@@ -171,7 +173,13 @@ def parse_args():
     parser.add_argument(
         "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
     )
-    parser.add_argument("--output_dir", type=str, default=None, help="Where to store the final model.")
+    
+    ####
+    Name = "hfl_chinese-roberta-wwm-ext_Ep100Ebs4AdamWlr5e-5_fromScratch"
+    parser.add_argument("--output_dir", type=str, default="./outputs/multiple_choice/"+Name+"/", help="Where to store the final model.")
+    parser.add_argument("--bestoutput_dir", type=str, default="./outputs/multiple_choice/"+Name+"/bestmodel/", help="Where to store the final model.")
+    parser.add_argument("--csv_dir", type=str, default="./outputs/multiple_choice/"+Name+"/"+Name+"_Accuracy.csv", help="Where to store the csv accuracy file.")
+    
     parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
     parser.add_argument(
         "--model_type",
@@ -397,7 +405,7 @@ def main():
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
     if args.config_name:
-        config = AutoConfig.from_pretrained(args.model_name_or_path)
+        config = AutoConfig.from_pretrained(args.config_name)
     elif args.model_name_or_path:
         config = AutoConfig.from_pretrained(args.model_name_or_path)
     else:
@@ -423,6 +431,7 @@ def main():
     else:
         logger.info("Training new model from scratch")
         model = AutoModelForMultipleChoice.from_config(config)
+        
 
     model.resize_token_embeddings(len(tokenizer))
 
@@ -613,11 +622,18 @@ def main():
             resume_step = int(training_difference.replace("step_", ""))
             starting_epoch = resume_step // len(train_dataloader)
             resume_step -= starting_epoch * len(train_dataloader)
+            
+    #define csv file save accuracy
+    df_accuracy=pd.DataFrame(columns=['epoch','Training_Accuracy','Training_Loss','Validation_Accuracy','Validation_Loss'])
+    df_accuracy.to_csv(args.csv_dir , index = False)
+    
+    best_valacc = 0
+    bestepoch = 0     
 
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
-        if args.with_tracking:
-            total_loss = 0
+        # if args.with_tracking:
+        total_loss = 0
         for step, batch in enumerate(train_dataloader):
             # We need to skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == starting_epoch:
@@ -629,12 +645,20 @@ def main():
                 outputs = model(**batch)
                 loss = outputs.loss
                 # We keep track of the loss at each epoch
-                if args.with_tracking:
-                    total_loss += loss.detach().float()
+                # if args.with_tracking:
+                total_loss += loss.detach().float()
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
+                
+                #prediction
+                predictions = outputs.logits.argmax(dim=-1)
+                predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
+                metric.add_batch(
+                    predictions=predictions,
+                    references=references,
+                )
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
@@ -650,11 +674,19 @@ def main():
 
             if completed_steps >= args.max_train_steps:
                 break
-
+            
+        training_metric = metric.compute()
+        accelerator.print(f"epoch {epoch} of training accuracy: {training_metric}")
+        
         model.eval()
+        val_total_loss = 0
+        
+        
         for step, batch in enumerate(eval_dataloader):
             with torch.no_grad():
                 outputs = model(**batch)
+            # print('outputs.loss',outputs.loss.item())
+            val_total_loss += outputs.loss.detach().float()
             predictions = outputs.logits.argmax(dim=-1)
             predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
             metric.add_batch(
@@ -664,6 +696,40 @@ def main():
 
         eval_metric = metric.compute()
         accelerator.print(f"epoch {epoch}: {eval_metric}")
+        
+        
+        # append data frame to CSV file
+        allaccuracy={
+        'epoch':[epoch],
+        'Training_Accuracy':[training_metric["accuracy"]],
+        'Training_Loss':[total_loss.item() / len(train_dataset)],
+        'Validation_Accuracy':[eval_metric["accuracy"]],
+        'Validation_Loss':[val_total_loss.item() / len(eval_dataset)],
+        }
+        pd.DataFrame(allaccuracy).to_csv(args.csv_dir , mode='a', index=False, header=False)
+        logger.info('CSV file save!')
+        
+        if eval_metric["accuracy"] > best_valacc:
+            best_valacc = eval_metric["accuracy"]
+            bestepoch = epoch
+            
+            if args.bestoutput_dir is not None:
+                accelerator.wait_for_everyone()
+                unwrapped_model = accelerator.unwrap_model(model)
+                unwrapped_model.save_pretrained(
+                    args.bestoutput_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
+                )
+                if accelerator.is_main_process:
+                    tokenizer.save_pretrained(args.bestoutput_dir)
+                    if args.push_to_hub:
+                        repo.push_to_hub(commit_message="End of training", auto_lfs_prune=True)
+                with open(os.path.join(args.bestoutput_dir, "all_results.json"), "w") as f:
+                    json.dump({"eval_accuracy": eval_metric["accuracy"]}, f)
+                    json.dump({"best epoch": bestepoch}, f)
+            logger.info('Save best model!')
+            
+        logger.info(f" Best Validation Accuracy = {best_valacc}")
+        logger.info(f" Best Epoch = {bestepoch}")
 
         if args.with_tracking:
             accelerator.log(

@@ -36,6 +36,7 @@ import torch
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
+import pandas as pd
 
 import evaluate
 import transformers
@@ -538,6 +539,13 @@ def main():
         )
 
     train_dataset = processed_datasets["train"]
+    train_dataset_id = train_dataset['id']
+    train_dataset_choice0 = train_dataset['choice0']
+    train_dataset_choice1 = train_dataset['choice1']
+    train_dataset_choice2 = train_dataset['choice2']
+    train_dataset_choice3 = train_dataset['choice3']
+    train_dataset_correct_choice = train_dataset['Answer']
+    
     eval_dataset = processed_datasets["validation"]
     eval_dataset_id = eval_dataset['id']
     eval_dataset_choice0 = eval_dataset['choice0']
@@ -545,6 +553,7 @@ def main():
     eval_dataset_choice2 = eval_dataset['choice2']
     eval_dataset_choice3 = eval_dataset['choice3']
     eval_dataset_correct_choice = eval_dataset['Answer']
+    
     train_dataset = train_dataset.remove_columns('id')
     train_dataset = train_dataset.remove_columns('choice0')
     train_dataset = train_dataset.remove_columns('choice1')
@@ -695,7 +704,15 @@ def main():
     # save model dir
     save_model_root = args.output_dir / "model"
     save_model_root.mkdir(parents=True, exist_ok=True)
-
+    
+    # save accuracy csv
+    acc_csv = args.output_dir / "accuracy.csv"
+    df_accuracy=pd.DataFrame(columns=['epoch','Training_Accuracy','Training_Loss'
+                                      ,'Validation_Accuracy','Validation_Loss'])
+    df_accuracy.to_csv(acc_csv , index = False)
+    
+    best_val_pred_acc = 0
+    best_epoch_forpred = 0
 
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
@@ -732,8 +749,8 @@ def main():
             if completed_steps >= args.max_train_steps:
                 break
 
-
-        print(f"epoch: {epoch}, loss: {total_loss}")
+        total_loss = total_loss/len(train_dataset)
+        print(f"epoch: {epoch}, training loss: {total_loss}")
 
         model.eval()
         if args.val_max_target_length is None:
@@ -743,7 +760,128 @@ def main():
             "max_length": args.val_max_target_length if args is not None else config.max_length,
             "num_beams": args.num_beams,
         }
+        
+        # validation data for loss
+        val_total_loss = 0
+        for step, batch in enumerate(eval_dataloader):
+            # We need to skip steps until we reach the resumed step
+            with torch.no_grad():
+                with accelerator.accumulate(model):
+                    outputs = model(**batch)
+                    loss = outputs.loss
+                    val_total_loss += loss.detach().float()
+                    
+        val_total_loss = val_total_loss/len(eval_dataset)
+        print(f"epoch: {epoch}, valodation loss: {val_total_loss}")
+            
+        
+        # training data for prefdiction
+        
+        title_predicted = []
 
+        for step, batch in enumerate(train_dataloader):
+            with torch.no_grad():
+                generated_tokens = accelerator.unwrap_model(model).generate(
+                    batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    **gen_kwargs,
+                )
+
+                generated_tokens = accelerator.pad_across_processes(
+                    generated_tokens, dim=1, pad_index=tokenizer.pad_token_id
+                )
+                labels = batch["labels"]
+                if not args.pad_to_max_length:
+                    # If we did not pad to max length, we need to pad the labels too
+                    labels = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
+
+                generated_tokens, labels = accelerator.gather_for_metrics((generated_tokens, labels))
+                generated_tokens = generated_tokens.cpu().numpy()
+                labels = labels.cpu().numpy()
+
+                if args.ignore_pad_token_for_loss:
+                    # Replace -100 in the labels as we can't decode them.
+                    labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
+                if isinstance(generated_tokens, tuple):
+                    generated_tokens = generated_tokens[0]
+                decoded_preds = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+                decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+
+                decoded_preds, decoded_labels = postprocess_text(decoded_preds, decoded_labels)
+                metric.add_batch(
+                    predictions=decoded_preds,
+                    references=decoded_labels,
+                )
+
+                title_predicted.append(decoded_preds[0])
+
+
+
+        result = metric.compute(use_stemmer=True)
+        result = {k: round(v * 100, 4) for k, v in result.items()}
+
+        logger.info("result:", result)
+        print(f"epoch: {epoch}, result: {result}", flush=True)
+
+        # write record to file
+        record_str += f"{epoch},{result['rouge1']},{result['rouge2']},{result['rougeL']},{result['rougeLsum']}\n"
+
+        if result['rouge1'] > best_rouge1:
+            best_epoch = epoch
+            best_rouge1 = result['rouge1']
+
+        # save jsonl prediction
+        pred_path = pred_dir / f"epoch_{epoch}_training_pred.jsonl"
+        with jsonlines.open(pred_path, "w") as writer:
+                for i in range(len(title_predicted)): 
+                    title = title_predicted[i].replace("<extra_id_0>", "").strip()
+                    writer.write({"title": title, "id": train_dataset_id[i]})
+
+
+
+
+        # calculate multiple choice question accuracy
+        total_questions = len(train_dataset_id)
+        answered_correctly = 0
+        for i in range(len(title_predicted)): 
+            # get prediction
+            pred_summary = title_predicted[i].replace("<extra_id_0>", "").strip()
+
+            # get 4 choices context and get scores
+            choice_0 = train_dataset_choice0[i]
+            choice_1 = train_dataset_choice1[i]
+            choice_2 = train_dataset_choice2[i]
+            choice_3 = train_dataset_choice3[i]
+            scores = utils.get_choices_scores(pred_summary, [choice_0, choice_1, choice_2, choice_3])
+
+            # compare result
+            pred_answer = np.argmax(np.array(scores))
+            true_answer = int(train_dataset_correct_choice[i][-1])
+            if pred_answer == true_answer:
+                answered_correctly += 1
+
+            print("\n\n\n")
+            print("epoch:", epoch)
+            print(f"question:", i)
+            print("pred summary:", pred_summary)
+            print(f"choice 0 score: {scores[0]:.4f}, text: {choice_0}")
+            print(f"choice 1 score: {scores[1]:.4f}, text: {choice_1}")
+            print(f"choice 2 score: {scores[2]:.4f}, text: {choice_2}")
+            print(f"choice 3 score: {scores[3]:.4f}, text: {choice_3}")
+            print("final prediction:", pred_answer)
+            print("true answer     :", true_answer)
+            print()
+
+        train_pred_acc = answered_correctly/total_questions
+        print("\n\n\n")
+        print("="*100)
+        print("Epoch:", epoch)
+        print("accuracy:", train_pred_acc)
+        print("\n\n\n")
+        
+        
+        
+        # validation data for prefdiction
         title_predicted = []
 
         for step, batch in enumerate(eval_dataloader):
@@ -798,7 +936,7 @@ def main():
             best_rouge1 = result['rouge1']
 
         # save jsonl prediction
-        pred_path = pred_dir / f"epoch_{epoch}_pred.jsonl"
+        pred_path = pred_dir / f"epoch_{epoch}_validation_pred.jsonl"
         with jsonlines.open(pred_path, "w") as writer:
                 for i in range(len(title_predicted)): 
                     title = title_predicted[i].replace("<extra_id_0>", "").strip()
@@ -839,13 +977,25 @@ def main():
             print("true answer     :", true_answer)
             print()
 
-
+        val_pred_acc = answered_correctly/total_questions
+        
         print("\n\n\n")
         print("="*100)
         print("Epoch:", epoch)
-        print("accuracy:", answered_correctly/total_questions)
+        print("accuracy:", val_pred_acc)
         print("\n\n\n")
-
+        
+        
+        # append data frame to CSV file
+        allaccuracy={
+        'epoch':[epoch],
+        'Training_Accuracy':[train_pred_acc],
+        'Training_Loss':[total_loss.item()],
+        'Validation_Accuracy':[val_pred_acc],
+        'Validation_Loss':[val_total_loss.item()]
+        }
+        pd.DataFrame(allaccuracy).to_csv(acc_csv , mode='a', index=False, header=False)
+        logger.info('CSV file save!')
               
 
 
@@ -876,36 +1026,45 @@ def main():
             accelerator.save_state(output_dir)
 
         # save model
-        epoch_model_save_path = save_model_root / f"epoch_{epoch}"
+        
+        if val_pred_acc > best_val_pred_acc:
+            best_val_pred_acc = val_pred_acc 
+            best_epoch_forpred = epoch
 
-        if epoch_model_save_path is not None:
-            accelerator.wait_for_everyone()
-            unwrapped_model = accelerator.unwrap_model(model)
-            unwrapped_model.save_pretrained(
-                epoch_model_save_path, is_main_process=accelerator.is_main_process, save_function=accelerator.save
-            )
-            if accelerator.is_main_process:
-                tokenizer.save_pretrained(epoch_model_save_path)
-                if args.push_to_hub:
-                    repo.push_to_hub(commit_message="End of training", auto_lfs_prune=True)
+            # epoch_model_save_path = save_model_root / f"epoch_{best_epoch_forpred}"
+            epoch_model_save_path = save_model_root
 
-                all_results = {f"eval_{k}": v for k, v in result.items()}
-                with open(os.path.join(epoch_model_save_path, "all_results.json"), "w") as f:
-                    json.dump(all_results, f)
-    
+            if epoch_model_save_path is not None:
+                accelerator.wait_for_everyone()
+                unwrapped_model = accelerator.unwrap_model(model)
+                unwrapped_model.save_pretrained(
+                    epoch_model_save_path, is_main_process=accelerator.is_main_process, save_function=accelerator.save
+                )
+                if accelerator.is_main_process:
+                    tokenizer.save_pretrained(epoch_model_save_path)
+                    if args.push_to_hub:
+                        repo.push_to_hub(commit_message="End of training", auto_lfs_prune=True)
+
+                    all_results = {f"eval_{k}": v for k, v in result.items()}
+                    with open(os.path.join(epoch_model_save_path, "all_results.json"), "w") as f:
+                        json.dump(all_results, f)
+                        
+        logger.info(f"  Best Epoch = {best_epoch_forpred}")
+        logger.info(f"  Best Validation Accuracy = {best_val_pred_acc}")
                     
-    with open(record_path, "w") as f:
-        f.write(record_str)
+    # with open(record_path, "w") as f:
+    #     f.write(record_str)
+        
+    # best_val_pred_acc
+    # # save the best model
+    # src_model_dir = save_model_root / f"epoch_{best_epoch}"
+    # tgt_model_dir = args.output_dir / "best_model"
+    # shutil.copytree(src_model_dir, tgt_model_dir)
 
-    # save the best model
-    src_model_dir = save_model_root / f"epoch_{best_epoch}"
-    tgt_model_dir = args.output_dir / "best_model"
-    shutil.copytree(src_model_dir, tgt_model_dir)
-
-    # save best prediction
-    src_file = pred_dir / f"epoch_{best_epoch}_pred.jsonl"
-    tgt_file = args.output_dir / "best_prediction.jsonl"
-    shutil.copy(src_file, tgt_file)
+    # # save best prediction
+    # src_file = pred_dir / f"epoch_{best_epoch}_pred.jsonl"
+    # tgt_file = args.output_dir / "best_prediction.jsonl"
+    # shutil.copy(src_file, tgt_file)
 
 
 
