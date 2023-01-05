@@ -40,6 +40,17 @@ python train_multiple_choice.py \
 ```
 
 
+### MultipleChoice - Strategy 3: question-answering format
+```shell
+python train_multiple_choice_question-answering.py \
+  --model_name_or_path hfl/chinese-roberta-wwm-ext \
+  --train_file "./data/QAdata/QAdata_trainselect.csv" \
+  --validation_file "./data/QAdata/QAdata_validselect.csv" \
+  --per_device_train_batch_size 2 \
+  --per_device_eval_batch_size 2 \
+  --num_train_epochs 10 \
+```
+
 
 ### MultipleChoice - Strategy 4: summairzation formulation
 ```shell
