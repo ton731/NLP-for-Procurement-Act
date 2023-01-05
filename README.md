@@ -40,7 +40,7 @@ python train_multiple_choice.py \
 ```
 
 
-### MultipleChoice - Strategy 3: question-answering form
+### MultipleChoice - Strategy 3: question-answering formulation
 ```shell
 python train_multiple_choice_question-answering.py \
   --model_name_or_path hfl/chinese-roberta-wwm-ext \
