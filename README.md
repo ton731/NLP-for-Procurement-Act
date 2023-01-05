@@ -2,13 +2,13 @@
 Group 80, 江郁瑄、周遠同、馮意凡、黃琮煒、魏廷儒
 
 
-## Environment
+### Environment
 ```shell
 pip install -r requirements.txt
 ```
 
 
-## MultipleChoice - Strategy 1: training without relevant laws
+### MultipleChoice - Strategy 1: training without relevant laws
 ```shell
 python train_multiple_choice.py \
   --model_name_or_path hfl/chinese-roberta-wwm-ext \
