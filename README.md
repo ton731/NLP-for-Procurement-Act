@@ -1,5 +1,7 @@
-# 2022 ADL Final Project
-Group 80, 江郁瑄、周遠同、馮意凡、黃琮煒、魏廷儒
+# Natural Legal Language Processing for Learning Government Procurement Act
+- This is the final project of 2022 ADL Course
+- Group 80, 江郁瑄、周遠同、馮意凡、黃琮煒、魏廷儒
+- 10 min video of this project: https://youtu.be/z15G9vAXAqo
 
 
 ### Environment
